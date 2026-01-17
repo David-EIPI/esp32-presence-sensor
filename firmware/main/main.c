@@ -177,7 +177,7 @@ static struct {
     .description = "\x0f" "Trigger thresh.",
     .min_present = 10,
     .max_present = 100,
-    .present_value = 20,
+    .present_value = 50,
     .resolution = 1,
     .status_flags = 0,
     .units = 95, /* No units */
@@ -188,9 +188,9 @@ static struct {
 
     {
     .description = "\x0e" "Hold threshold",
-    .min_present = 15,
+    .min_present = 10,
     .max_present = 100,
-    .present_value = 20,
+    .present_value = 30,
     .resolution = 1,
     .status_flags = 0,
     .units = 95, /*No units */

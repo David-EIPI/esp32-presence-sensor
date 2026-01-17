@@ -6,7 +6,7 @@ manufacturer_id=`awk '/OTA_UPGRADE_MANUFACTURER/{print $3}' main/ota.h`
 model_id=`awk '/MODEL_IDENTIFIER/{print $4}' main/main.h`
 echo $model_id
 
-release_notes="Add diagnostic analog sensors."
+release_notes="Update sensor configuration when Zigbee parameters change."
 
 /usr/bin/python ~/esp/esp-zigbee-sdk/tools/image_builder_tool/image_builder_tool.py \
     --create ota/${build_name}.ota.bin \
@@ -22,7 +22,7 @@ file_sz=`stat -c %s ota/${build_name}.ota.bin`
 checksum=(`openssl dgst -sha3-256 ota/${build_name}.ota.bin`)
 curdate=`date +"%F %T"`
 
-cat >ota/local_index.json <<EOJ
+cat >ota/${build_name}.json <<EOJ
 // Place this and binary files in HA configured OTA directory, e.g. /config/zha_ota
 // Example configuration entry in configuration.yaml:
 // zha:

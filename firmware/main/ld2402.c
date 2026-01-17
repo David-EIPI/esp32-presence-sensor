@@ -19,11 +19,11 @@
 uint8_t ld2402_calibrationStatus = 0;
 int32_t ld2402_calibrationNoiseGates = 0;
 
-int32_t ld2402_MaxDistance = 200;
 uint8_t ld2402_Interference = 0;
 uint8_t ld2402_MotionDetected = 0;
 uint8_t ld2402_StillDetected = 0; // micro-motion
 int32_t ld2402_Distance = 0; // detection distance, cm
+int32_t ld2402_MaxDistance = 200;
 int32_t ld2402_Timeout = 0;
 
 int32_t ld2402_trigger_threshold = 30;
@@ -758,6 +758,10 @@ void ld2402_task(void *arg)
     uint64_t cfg_timer = UINT_MAX;
     uint64_t cal_timer = 0;
 
+
+    int32_t prev_MaxDistance = ld2402_MaxDistance;
+    int32_t prev_Timeout = ld2402_Timeout;
+
     while (1) {
         clock_now = clock();
         uint64_t delta = clock_now - clock_prev;
@@ -777,9 +781,16 @@ void ld2402_task(void *arg)
             }
 
             if (CFG_IDLE == configStep && CAL_IDLE == calibrationStep) {
-                if (cfg_timer > timer_resolution * 10000) {
+/*
+    Update configuration parameters when they change and also periodically (just in case, if sensor loses its state)
+*/
+                if (cfg_timer > timer_resolution * 10000        ||
+                    prev_MaxDistance != ld2402_MaxDistance      ||
+                    prev_Timeout != ld2402_Timeout) {
 //                    ESP_LOGI(RX_TASK_TAG, "Config start");
                     configStep = CFG_BEGIN;
+                    prev_MaxDistance = ld2402_MaxDistance;
+                    prev_Timeout = ld2402_Timeout;
                     cfg_timer = 0;
                 } else {
                     if (0 != ld2402_calibrationTimer) {
