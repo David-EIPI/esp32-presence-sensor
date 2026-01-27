@@ -13,12 +13,22 @@
 #include "esp_zigbee_core.h"
 #include "main.h"
 
+/* Hardware version offset */
+#if defined(CONFIG_LD2420_SENSOR)
+#define HW_VER_OFFSET 2
+#elif defined(CONFIG_LD2410S_SENSOR)
+#define HW_VER_OFFSET 0
+#else
+#error Sensor type is not defined. Use menu configurator to select sensor type.
+#endif
+
+
 /* Zigbee configuration */
 #define OTA_UPGRADE_MANUFACTURER            0xD3B1                                  /* The attribute indicates the file version of the downloaded image on the device*/
 #define OTA_UPGRADE_IMAGE_TYPE              0x1011                                  /* The attribute indicates the value for the manufacturer of the device */
-#define OTA_UPGRADE_RUNNING_FILE_VERSION    101                                     /* The attribute indicates the file version of the running firmware image on the device */
-#define OTA_UPGRADE_DOWNLOADED_FILE_VERSION 101                                     /* The attribute indicates the file version of the downloaded firmware image on the device */
-#define OTA_UPGRADE_HW_VERSION              0x0102                                  /* The parameter indicates the version of hardware */
+#define OTA_UPGRADE_RUNNING_FILE_VERSION    104                                     /* The attribute indicates the file version of the running firmware image on the device */
+#define OTA_UPGRADE_DOWNLOADED_FILE_VERSION 104                                     /* The attribute indicates the file version of the downloaded firmware image on the device */
+#define OTA_UPGRADE_HW_VERSION              (0x0102+HW_VER_OFFSET)                  /* The parameter indicates the version of hardware */
 #define OTA_UPGRADE_MAX_DATA_SIZE           223                                     /* The recommended OTA image block size */
 
 #define OTA_ELEMENT_HEADER_LEN              6       /* OTA element format header size include tag identifier and length field */

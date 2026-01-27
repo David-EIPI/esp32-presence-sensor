@@ -23,7 +23,7 @@
 #include "driver/temperature_sensor.h"
 #include "main.h"
 #include "clock.h"
-#include "ld2402.h"
+#include "ld24xx.h"
 #include "ota.h"
 
 
@@ -57,6 +57,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     esp_err_t err_status = signal_struct->esp_err_status;
     esp_zb_app_signal_type_t sig_type = *p_sg_p;
 //    uint8_t min_lqi;
+//    ESP_LOGI(TAG, ">sig %u", sig_type);
 
     switch (sig_type) {
     case ESP_ZB_NLME_STATUS_INDICATION:
@@ -148,7 +149,7 @@ static struct {
 } analog_output_attr_values[] = {
     {
     .description = "\x07" "Timeout",
-    .min_present = 1,
+    .min_present = 0,
     .max_present = 3600,
     .present_value = 20,
     .resolution = 1,
@@ -156,7 +157,7 @@ static struct {
     .units = 73, /* 73 = seconds */
     .app_type = 14 << 16, /* 14 = timer */
 //    .value_ptr = &motionTimeout,
-    .value_ptr = &ld2402_Timeout,
+    .value_ptr = &ld24xx_Timeout,
     .nvs_key = "AO_00",
     },
 
@@ -169,7 +170,7 @@ static struct {
     .status_flags = 0,
     .units = 118, /* 118 = cm */
     .app_type = 2 << 16, /* 2 = Gauge */
-    .value_ptr = &ld2402_MaxDistance,
+    .value_ptr = &ld24xx_MaxDistance,
     .nvs_key = "AO_01",
     },
 
@@ -182,7 +183,7 @@ static struct {
     .status_flags = 0,
     .units = 95, /* No units */
     .app_type = 12 << 16, /* counter */
-    .value_ptr = &ld2402_trigger_threshold,
+    .value_ptr = &ld24xx_trigger_threshold,
     .nvs_key = "AO_02",
     },
 
@@ -195,7 +196,7 @@ static struct {
     .status_flags = 0,
     .units = 95, /*No units */
     .app_type = 12 << 16, /* counter */
-    .value_ptr = &ld2402_keep_threshold,
+    .value_ptr = &ld24xx_keep_threshold,
     .nvs_key = "AO_03",
     },
 
@@ -223,7 +224,7 @@ static struct {
     .status_flags = 0,
     .units = 118, /* 118 = cm */
     .app_type = 0xff, /* Other - disable unit override in zigpy */
-    .value_ptr = &ld2402_Distance,
+    .value_ptr = &ld24xx_Distance,
     .prev_value = 0,
     .endpoint = -1,
     },
@@ -236,7 +237,7 @@ static struct {
     .status_flags = 0,
     .units = 73, /* 73 = seconds */
     .app_type = 14 >> 16, /* timer */
-    .value_ptr = &ld2402_calibrationTimer,
+    .value_ptr = &ld24xx_calibrationTimer,
     .prev_value = 0,
     .endpoint = -1,
     },
@@ -249,7 +250,7 @@ static struct {
     .status_flags = 0,
     .units = 95, /* 95 = no unit */
     .app_type = 0xff >> 16,
-    .value_ptr = &ld2402_gate0,
+    .value_ptr = &ld24xx_gate0,
     .prev_value = 0,
     .endpoint = -1,
     },
@@ -262,7 +263,7 @@ static struct {
     .status_flags = 0,
     .units = 95, /* 95 = no unit */
     .app_type = 0xff >> 16,
-    .value_ptr = &ld2402_gate3,
+    .value_ptr = &ld24xx_gate3,
     .prev_value = 0,
     .endpoint = -1,
     },
@@ -393,14 +394,14 @@ static struct {
 } binary_input_attr_values[] = {
     {
         .description = "\x0f" "Motion detected",
-        .value_ptr = &ld2402_MotionDetected,
+        .value_ptr = &ld24xx_MotionDetected,
         .prev_value = 0,
         .endpoint = -1,
     },
 
     {
         .description = "\x0f" "PS Interference",
-        .value_ptr = &ld2402_Interference,
+        .value_ptr = &ld24xx_Interference,
         .prev_value = 0,
         .endpoint = -1,
     },
@@ -560,6 +561,15 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
     return ret;
 }
 
+static esp_err_t zb_factory_reset_handler(esp_zb_zcl_basic_reset_factory_default_message_t *message)
+{
+//    resetRequest = 1;
+    ESP_LOGW(TAG, "Receive factory reset %u:%u", message->info.dst_endpoint, message->info.cluster);
+    resetRequest = message->info.dst_endpoint;
+//        esp_restart();
+    return ESP_OK;
+}
+
 static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id, const void *message)
 {
     esp_err_t ret = ESP_OK;
@@ -572,6 +582,9 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         break;
     case ESP_ZB_CORE_OTA_UPGRADE_QUERY_IMAGE_RESP_CB_ID:
         ret = zb_ota_upgrade_query_image_resp_handler(*(esp_zb_zcl_ota_upgrade_query_image_resp_message_t *)message);
+        break;
+    case ESP_ZB_CORE_BASIC_RESET_TO_FACTORY_RESET_CB_ID:
+        ret = zb_factory_reset_handler((esp_zb_zcl_basic_reset_factory_default_message_t *)message);
         break;
     default:
         ESP_LOGW(TAG, "Receive Zigbee action(0x%x) callback", callback_id);
@@ -598,13 +611,14 @@ static void setup_endpoints(void)
 
         esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
 
-        if (a_idx == 0) {
+//        if (a_idx == 0) {
+//        if (a_idx < lengthof(analog_output_attr_values) - 1) {
             ESP_ERROR_CHECK(esp_zb_cluster_list_add_basic_cluster(
                 cluster_list,
                 create_basic_cluster(MANUFACTURER_NAME),
                 ESP_ZB_ZCL_CLUSTER_SERVER_ROLE
             ));
-        }
+//        }
 
         if (a_idx < lengthof(analog_input_attr_values)) {
             ESP_ERROR_CHECK(esp_zb_cluster_list_add_analog_input_cluster(
@@ -775,9 +789,9 @@ static void zb_update_task(void *pvParameters)
             }
         }
 
-	if (prev_dist_sensor != ld2402_Distance) {
-	    prev_dist_sensor = ld2402_Distance;
-	    ESP_LOGI(TASK_TAG, "R%s: '%lu' %u", ld2402_eng_mode ? "e":"", prev_dist_sensor, ld2402_MotionDetected);
+	if (prev_dist_sensor != ld24xx_Distance) {
+	    prev_dist_sensor = ld24xx_Distance;
+	    ESP_LOGI(TASK_TAG, "R%s: '%lu' %u", ld24xx_eng_mode ? "e":"", prev_dist_sensor, ld24xx_MotionDetected);
 	}
 
 	if (prev_temperature != temperature_sensor_value) {
@@ -810,7 +824,7 @@ void app_main(void)
 //    init_timer(&timer, timer_resolution);
 
     xTaskCreate(esp_zb_task, "Zigbee_main", 1024 * 8, NULL, 2, NULL);
-    xTaskCreate(ld2402_task, "uart_rx_task", 1024 * 4, NULL, 1, NULL);
+    xTaskCreate(ld24xx_task, "uart_rx_task", 1024 * 4, NULL, 1, NULL);
 
     zb_update_task(NULL);
 }

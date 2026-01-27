@@ -12,30 +12,36 @@
 #include "esp_system.h"
 #include "clock.h"
 #include "main.h"
-#include "ld2402.h"
+#include "ld24xx.h"
+
+#if defined(CONFIG_LD2402_SENSOR)
 
 /* Shared variables */
 
-uint8_t ld2402_calibrationStatus = 0;
-int32_t ld2402_calibrationNoiseGates = 0;
+uint8_t ld24xx_calibrationStatus = 0;
+int32_t ld24xx_calibrationNoiseGates = 0;
 
-uint8_t ld2402_Interference = 0;
-uint8_t ld2402_MotionDetected = 0;
-uint8_t ld2402_StillDetected = 0; // micro-motion
-int32_t ld2402_Distance = 0; // detection distance, cm
-int32_t ld2402_MaxDistance = 200;
-int32_t ld2402_Timeout = 0;
+uint8_t ld24xx_Interference = 0;
+uint8_t ld24xx_MotionDetected = 0;
+uint8_t ld24xx_StillDetected = 0; // micro-motion
+int32_t ld24xx_Distance = 0; // detection distance, cm
+int32_t ld24xx_MaxDistance = 200;
+int32_t ld24xx_Timeout = 0;
 
-int32_t ld2402_trigger_threshold = 30;
-int32_t ld2402_keep_threshold    = 20;
-//int32_t ld2402_micro_threshold   = 30;
+int32_t ld24xx_trigger_threshold = 30;
+int32_t ld24xx_keep_threshold    = 20;
+//int32_t ld24xx_micro_threshold   = 30;
 
 /* Diagnostic output */
-int32_t ld2402_gate0 = 0;
-int32_t ld2402_gate3 = 0;
+int32_t ld24xx_gate0 = 0;
+int32_t ld24xx_gate3 = 0;
 
 /* Calibration progress */
-int32_t ld2402_calibrationTimer = 0;
+int32_t ld24xx_calibrationTimer = 0;
+
+/* Factory reset requested via Zigbee - not implemented for 2420 */
+volatile int32_t resetRequest = 0;
+
 
 /* Local constants and variables */
 static const int RX_BUF_SIZE = 512;
@@ -59,7 +65,7 @@ static const uint32_t timer_resolution = 10 * 1000;
 #define clock(...) gpclock(timer)
 
 /* -1 = unknown, otherwise version, e.g. 303050 = 3.3.5 */
-static int ld2402_fw_version = -1;
+static int ld24xx_fw_version = -1;
 
 static uint32_t ack_wait_timeout = 10;
 
@@ -68,10 +74,10 @@ enum {
     COMM_STATE_READY,
     COMM_STATE_WAIT_ACK
 };
-static char ld2402_comm_state = COMM_STATE_READY;
+static char ld24xx_comm_state = COMM_STATE_READY;
 
 /* Engineering data mode flag */
-uint8_t ld2402_eng_mode = 0;
+uint8_t ld24xx_eng_mode = 0;
 
 /**********
 *  UART interface functions
@@ -473,7 +479,7 @@ static void handle_config_param(const uint8_t *frame, size_t body_len)
         switch (configStep) {
             case CFG_PARAM_INTERFERENCE:
                 ESP_LOGI(RX_TASK_TAG, "PS Interference: %lu", param_value);
-                ld2402_Interference = param_value == 2;
+                ld24xx_Interference = param_value == 2;
                 break;
             default:
                 break;
@@ -485,32 +491,32 @@ static void handle_config_param(const uint8_t *frame, size_t body_len)
 static void handle_off_message(void)
 {
 //    ESP_LOGI(RX_TASK_TAG, "OFF");
-    ld2402_MotionDetected = 0;
-    ld2402_StillDetected = 0;
-    ld2402_Distance = 0;
-    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level(LED_PIN, ld2402_MotionDetected));
+    ld24xx_MotionDetected = 0;
+    ld24xx_StillDetected = 0;
+    ld24xx_Distance = 0;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level(LED_PIN, ld24xx_MotionDetected));
 }
 
 static void handle_distance_message(uint16_t distance_value)
 {
 //    ESP_LOGI(RX_TASK_TAG, "Distance: %u", distance_value);
-    ld2402_Distance = distance_value;
-    ld2402_MotionDetected = 1;
-    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level(LED_PIN, ld2402_MotionDetected));
+    ld24xx_Distance = distance_value;
+    ld24xx_MotionDetected = 1;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level(LED_PIN, ld24xx_MotionDetected));
 }
 
 static void handle_version_frame(const uint8_t *frame, size_t frame_len)
 {
     if (frame_len > 2) {
-        ld2402_fw_version = version_to_u32(frame+2, frame[0]);
-        ESP_LOGI(RX_TASK_TAG, "FW Ver: 0x%06x", ld2402_fw_version);
+        ld24xx_fw_version = version_to_u32(frame+2, frame[0]);
+        ESP_LOGI(RX_TASK_TAG, "FW Ver: 0x%06x", ld24xx_fw_version);
     }
     light_driver_set_power(0, 0, 0);
 }
 
 static void handle_command_frame(const uint8_t *frame, uint16_t body_len)
 {
-    ld2402_comm_state = COMM_STATE_READY;
+    ld24xx_comm_state = COMM_STATE_READY;
 
     if (body_len < 4)
         return;
@@ -536,7 +542,7 @@ static void handle_command_frame(const uint8_t *frame, uint16_t body_len)
             break;
             /* Engineering data mode selected */
         case CMD_SET_MODE:
-            ld2402_eng_mode = 1;
+            ld24xx_eng_mode = 1;
             configStep = nextConfigStep;
             break;
             /* Configuration mode successfully enabled or disabled */
@@ -553,7 +559,7 @@ static void handle_command_frame(const uint8_t *frame, uint16_t body_len)
             break;
 
         case CMD_AUTO_GAIN_COMPLETE:
-            ld2402_calibrationStatus = ack;
+            ld24xx_calibrationStatus = ack;
 //            ESP_LOGI(RX_TASK_TAG, "Auto gain completed, %d", nextCalibrationStep);
             calibrationStep = nextCalibrationStep;
 /* This pause is needed after CMD_AUTO_GAIN_COMPLETE for some reason, otherwise the next command is ignored. */
@@ -573,15 +579,15 @@ static void handle_data_frame(const uint8_t *frame, uint16_t body_len)
 {
     static char buf[256];
 
-    ld2402_MotionDetected = frame[0] == 1;
-    ld2402_StillDetected = frame[0] == 2;
-    ld2402_Distance = u16_le(frame[1], frame[2]);
+    ld24xx_MotionDetected = frame[0] == 1;
+    ld24xx_StillDetected = frame[0] == 2;
+    ld24xx_Distance = u16_le(frame[1], frame[2]);
 
     if (CAL_MEASURE == calibrationStep) {
         unsigned i, j;
         const uint8_t *p;
         if (body_len >= 131) {
-            j = sprintf(buf, "%u ", ld2402_MotionDetected);
+            j = sprintf(buf, "%u ", ld24xx_MotionDetected);
             n_measure += 1;
             for (i = 0, p = frame + 3; i < lengthof(gate_energy); i++, p += 4) {
                 uint32_t energy = pack4_be(p[3], p[2], p[1], p[0]);
@@ -595,9 +601,9 @@ static void handle_data_frame(const uint8_t *frame, uint16_t body_len)
         }
     }
 
-//    ESP_LOGI(RX_TASK_TAG, "DATA (%u bytes): %u %u", body_len, ld2402_MotionDetected, ld2402_Distance);
+//    ESP_LOGI(RX_TASK_TAG, "DATA (%u bytes): %u %u", body_len, ld24xx_MotionDetected, ld24xx_Distance);
 /* Indicate detection for visual control */
-    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level(LED_PIN, ld2402_MotionDetected));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level(LED_PIN, ld24xx_MotionDetected));
 }
 
 static void send_command(uint16_t command, uint8_t *data_bytes, unsigned count)
@@ -616,7 +622,7 @@ static void send_command(uint16_t command, uint8_t *data_bytes, unsigned count)
 
     uart_write_bytes(UART_NUM_1, &frame_footer, sizeof(frame_footer));
 
-    ld2402_comm_state = COMM_STATE_WAIT_ACK;
+    ld24xx_comm_state = COMM_STATE_WAIT_ACK;
     ESP_LOGI(RX_TASK_TAG, "Send 0x%x (%lu bytes)", command, frame_len);
 }
 
@@ -633,16 +639,16 @@ static void update_configuration(void)
     /* Update the parameter */
         case CFG_PARAM_MAXDIST:
             set_parameter_data[0] = PARAM_MAX_DISTANCE;
-            set_parameter_data[1] = ld2402_MaxDistance & (uint16_t)-1;
-            set_parameter_data[2] = ld2402_MaxDistance >> 16;
+            set_parameter_data[1] = ld24xx_MaxDistance & (uint16_t)-1;
+            set_parameter_data[2] = ld24xx_MaxDistance >> 16;
             send_command(CMD_SET_PARAMS, (uint8_t *)&set_parameter_data, sizeof(set_parameter_data));
             break;
 
     /* Update the parameter */
         case CFG_PARAM_TIMEOUT:
             set_parameter_data[0] = PARAM_TIMEOUT;
-            set_parameter_data[1] = ld2402_Timeout & (uint16_t)-1;
-            set_parameter_data[2] = ld2402_Timeout >> 16;
+            set_parameter_data[1] = ld24xx_Timeout & (uint16_t)-1;
+            set_parameter_data[2] = ld24xx_Timeout >> 16;
             send_command(CMD_SET_PARAMS, (uint8_t *)&set_parameter_data, sizeof(set_parameter_data));
             break;
     /* Read the parameter */
@@ -679,12 +685,12 @@ static void calculate_gate_thresholds(void)
         gate_energy[i] /= n_measure;
         gate_energy[i + LD2402_NUM_GATES] /= n_measure;
         ESP_LOGI(RX_TASK_TAG, "Measured: 0x%02x: %6ld %6ld", i, gate_energy[i], gate_energy[i + LD2402_NUM_GATES]);
-        gate_energy[i] = ((gate_energy[i] * ld2402_trigger_threshold + 50) / 100) * 10;
-        gate_energy[i + LD2402_NUM_GATES] = ((gate_energy[i + LD2402_NUM_GATES] * ld2402_keep_threshold + 50) / 100) * 10;
+        gate_energy[i] = ((gate_energy[i] * ld24xx_trigger_threshold + 50) / 100) * 10;
+        gate_energy[i + LD2402_NUM_GATES] = ((gate_energy[i + LD2402_NUM_GATES] * ld24xx_keep_threshold + 50) / 100) * 10;
         ESP_LOGI(RX_TASK_TAG, "Threshold: 0x%02x: %6ld %6ld", i, gate_energy[i], gate_energy[i + LD2402_NUM_GATES]);
     }
-    ld2402_gate0 = (gate_energy[0] + gate_energy[LD2402_NUM_GATES]) / 2;
-    ld2402_gate3 = (gate_energy[3] + gate_energy[3+LD2402_NUM_GATES]) / 2;
+    ld24xx_gate0 = (gate_energy[0] + gate_energy[LD2402_NUM_GATES]) / 2;
+    ld24xx_gate3 = (gate_energy[3] + gate_energy[3+LD2402_NUM_GATES]) / 2;
 }
 
 static void do_calibration(void)
@@ -711,7 +717,7 @@ static void do_calibration(void)
             break;
 
         case CAL_MEASURE:
-            if (0 != ld2402_calibrationTimer)
+            if (0 != ld24xx_calibrationTimer)
                 return;
             calculate_gate_thresholds();
             send_command(CMD_ENABLE_CONFIG, NULL, 0);
@@ -739,7 +745,7 @@ static void do_calibration(void)
         nextCalibrationStep = CAL_IDLE;
 }
 
-void ld2402_task(void *arg)
+void ld24xx_task(void *arg)
 {
 /* Indicate red color until the sensor is detected */
     light_driver_init(255, 0, 0);
@@ -759,8 +765,8 @@ void ld2402_task(void *arg)
     uint64_t cal_timer = 0;
 
 
-    int32_t prev_MaxDistance = ld2402_MaxDistance;
-    int32_t prev_Timeout = ld2402_Timeout;
+    int32_t prev_MaxDistance = ld24xx_MaxDistance;
+    int32_t prev_Timeout = ld24xx_Timeout;
 
     while (1) {
         clock_now = clock();
@@ -772,10 +778,10 @@ void ld2402_task(void *arg)
         cal_timer += delta;
 
     /* Perform init/config/monitoring tasks */
-        if (COMM_STATE_READY == ld2402_comm_state) {
+        if (COMM_STATE_READY == ld24xx_comm_state) {
             ack_timer = 0;
 
-            if (ld2402_fw_version < 0) {
+            if (ld24xx_fw_version < 0) {
                 send_command(CMD_GET_VERSION, NULL, 0);
                 continue;
             }
@@ -785,15 +791,15 @@ void ld2402_task(void *arg)
     Update configuration parameters when they change and also periodically (just in case, if sensor loses its state)
 */
                 if (cfg_timer > timer_resolution * 10000        ||
-                    prev_MaxDistance != ld2402_MaxDistance      ||
-                    prev_Timeout != ld2402_Timeout) {
+                    prev_MaxDistance != ld24xx_MaxDistance      ||
+                    prev_Timeout != ld24xx_Timeout) {
 //                    ESP_LOGI(RX_TASK_TAG, "Config start");
                     configStep = CFG_BEGIN;
-                    prev_MaxDistance = ld2402_MaxDistance;
-                    prev_Timeout = ld2402_Timeout;
+                    prev_MaxDistance = ld24xx_MaxDistance;
+                    prev_Timeout = ld24xx_Timeout;
                     cfg_timer = 0;
                 } else {
-                    if (0 != ld2402_calibrationTimer) {
+                    if (0 != ld24xx_calibrationTimer) {
                         calibrationStep = CAL_BEGIN;
                         cal_timer = 0;
                     }
@@ -811,8 +817,8 @@ void ld2402_task(void *arg)
 
             if (CAL_IDLE != calibrationStep) {
             /* Decrement the main calibration timer by 1 per second */
-                if (cal_timer >= timer_resolution && ld2402_calibrationTimer > 0) {
-                    ld2402_calibrationTimer -= 1;
+                if (cal_timer >= timer_resolution && ld24xx_calibrationTimer > 0) {
+                    ld24xx_calibrationTimer -= 1;
                     cal_timer -= timer_resolution;
                 }
                 do_calibration();
@@ -820,7 +826,7 @@ void ld2402_task(void *arg)
         } else {
     /* Ack not received within timeout period - exit configuration mode */
             if (ack_timer > ack_wait_timeout * timer_resolution) {
-                ld2402_comm_state = COMM_STATE_READY;
+                ld24xx_comm_state = COMM_STATE_READY;
                 if (CFG_IDLE != configStep)
                     configStep = CAL_END;
                 if (CAL_IDLE != calibrationStep)
@@ -834,3 +840,4 @@ void ld2402_task(void *arg)
     }
 }
 
+#endif

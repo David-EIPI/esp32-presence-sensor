@@ -615,6 +615,13 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# Select LD24xx sensor to use
+#
+# CONFIG_LD2402_SENSOR is not set
+CONFIG_LD2410S_SENSOR=y
+# end of Select LD24xx sensor to use
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y

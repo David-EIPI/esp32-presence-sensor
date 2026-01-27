@@ -6,7 +6,7 @@ manufacturer_id=`awk '/OTA_UPGRADE_MANUFACTURER/{print $3}' main/ota.h`
 model_id=`awk '/MODEL_IDENTIFIER/{print $4}' main/main.h`
 echo $model_id
 
-release_notes="Update sensor configuration when Zigbee parameters change."
+release_notes="Implement sensor table reset via basic cluster factory reset"
 
 /usr/bin/python ~/esp/esp-zigbee-sdk/tools/image_builder_tool/image_builder_tool.py \
     --create ota/${build_name}.ota.bin \
